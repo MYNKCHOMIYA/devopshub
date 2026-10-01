@@ -6,3 +6,6 @@ alembic
 pydantic-settings
 pytest
 httpx
+email-validator
+argon2-cffi
+
