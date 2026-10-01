@@ -1,17 +1,18 @@
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-from uuid import UUID
+from sqlalchemy.exc import SQLAlchemyError
 
-from app.crud.user import create_user,get_user_by_id,get_users,soft_delete_user
-from app.schemas.user import UserCreate, UserResponse
-from app.db.session import engine,get_db
+from app.api.routes.users import router as users_router
+from app.db.session import engine
 
 
 app = FastAPI(
     title="DevOpsHub API",
     version="0.1.0",
 )
+
+
+app.include_router(users_router)
 
 
 @app.get("/health")
@@ -43,73 +44,3 @@ def readiness_check():
         "service": "devopshub-api",
         "database": "ok",
     }
-
-
-
-@app.post(
-    "/users",
-    response_model=UserResponse,
-    status_code=201,
-)
-def create_user_endpoint(
-    user_data: UserCreate,
-    db: Session = Depends(get_db),
-):
-    try:
-        return create_user(db, user_data)
-
-    except IntegrityError:
-        raise HTTPException(
-            status_code=409,
-            detail="Username or email already exists.",
-        )
-
-
-@app.get(
-    "/users/{user_id}",
-    response_model=UserResponse,
-)
-def get_user_endpoint(
-    user_id: UUID,
-    db: Session = Depends(get_db),
-):
-    user = get_user_by_id(db, user_id)
-
-    if user is None:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found.",
-        )
-
-    return user
-
-
-@app.get(
-    "/users",
-    response_model=list[UserResponse],
-)
-def get_users_endpoint(
-    db: Session = Depends(get_db),
-):
-    return get_users(db)
-
-
-@app.delete(
-    "/users/{user_id}",
-    status_code=204,
-)
-def delete_user_endpoint(
-    user_id: UUID,
-    db: Session = Depends(get_db),
-):
-    user = get_user_by_id(db, user_id)
-
-    if user is None:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found.",
-        )
-
-    soft_delete_user(db, user)
-
-    return None
