@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Uuid
+from sqlalchemy import String, Uuid , DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -47,5 +47,6 @@ class User(TimestampMixin, Base):
     )
 
     deleted_at: Mapped[datetime | None] = mapped_column(
-        nullable=True,
+        DateTime(timezone=True),
+	nullable=True,
     )
