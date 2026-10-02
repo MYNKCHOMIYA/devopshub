@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from enum import Enum
 
-from sqlalchemy import Date, ForeignKey, String, Text, Uuid
+from sqlalchemy import Date, ForeignKey, String, Text, Uuid , DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -79,5 +79,6 @@ class Task(TimestampMixin, Base):
     )
 
     deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
         nullable=True,
     )
