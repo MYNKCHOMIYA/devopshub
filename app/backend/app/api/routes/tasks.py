@@ -76,6 +76,6 @@ def delete_task_endpoint(
             detail="Task not found.",
         )
 
-    soft_delete_task(db, task)
+    soft_delete_task(db, task, task.created_by_id)
 
     return None

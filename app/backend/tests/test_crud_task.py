@@ -393,7 +393,7 @@ def test_soft_delete_task():
             ),
         )
 
-        deleted_task = soft_delete_task(db, task)
+        deleted_task = soft_delete_task(db, task,user.id)
 
         assert deleted_task.deleted_at is not None
         assert isinstance(deleted_task.deleted_at, datetime)
@@ -1098,5 +1098,214 @@ def test_update_task_assignee_rolls_back_when_activity_fails(monkeypatch):
             if user is not None:
                 db.delete(user)
                 db.commit()
+
+        db.close()
+
+
+def test_soft_delete_task_records_activity():
+    unique_value = uuid.uuid4().hex[:8]
+
+    db = SessionLocal()
+    user = None
+    project = None
+    task = None
+
+    try:
+        user = User(
+            username=f"taskdeleteaudit_{unique_value}",
+            email=f"taskdeleteaudit_{unique_value}@example.com",
+            password_hash=hash_password("strongpassword"),
+            name="Task Delete Audit User",
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        project = create_project(
+            db,
+            ProjectCreate(
+                owner_id=user.id,
+                name="Task Delete Audit Project",
+            ),
+        )
+
+        task = create_task(
+            db,
+            TaskCreate(
+                project_id=project.id,
+                created_by_id=user.id,
+                assignee_id=user.id,
+                title="Task Delete Audit Test",
+            ),
+        )
+
+        deleted_task = soft_delete_task(
+            db,
+            task,
+            user.id,
+        )
+
+        assert deleted_task.deleted_at is not None
+        assert deleted_task.deleted_at.tzinfo is not None
+
+        activities = get_activities_for_task(
+            db,
+            task.id,
+        )
+
+        delete_activities = [
+            activity
+            for activity in activities
+            if activity.action == "TASK_DELETED"
+        ]
+
+        assert len(delete_activities) == 1
+
+        activity = delete_activities[0]
+
+        assert activity.project_id == project.id
+        assert activity.task_id == task.id
+        assert activity.actor_id == user.id
+        assert activity.action == "TASK_DELETED"
+        assert activity.activity_metadata == {
+            "title": task.title,
+        }
+        assert activity.created_at is not None
+
+    finally:
+        if task is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.task_id == task.id
+                )
+            )
+            db.delete(task)
+            db.commit()
+
+        if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
+            db.delete(project)
+            db.commit()
+
+        if user is not None:
+            db.delete(user)
+            db.commit()
+
+        db.close()
+
+
+
+
+def test_soft_delete_task_rolls_back_when_activity_fails(monkeypatch):
+    unique_value = uuid.uuid4().hex[:8]
+
+    db = SessionLocal()
+    user = None
+    project = None
+    task = None
+
+    try:
+        user = User(
+            username=f"deleterollback_{unique_value}",
+            email=f"deleterollback_{unique_value}@example.com",
+            password_hash=hash_password("strongpassword"),
+            name="Delete Rollback User",
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        project = create_project(
+            db,
+            ProjectCreate(
+                owner_id=user.id,
+                name="Delete Rollback Project",
+            ),
+        )
+
+        task = create_task(
+            db,
+            TaskCreate(
+                project_id=project.id,
+                created_by_id=user.id,
+                assignee_id=user.id,
+                title="Delete Rollback Task",
+            ),
+        )
+
+        assert task.deleted_at is None
+
+        def fail_record_activity(db, activity_data):
+            raise RuntimeError("Simulated delete activity failure")
+
+        monkeypatch.setattr(
+            "app.crud.activity.record_activity",
+            fail_record_activity,
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="Simulated delete activity failure",
+        ):
+            soft_delete_task(
+                db,
+                task,
+                user.id,
+            )
+
+        # The soft delete was flushed but never committed.
+        db.rollback()
+
+        # Re-read the task from the database.
+        refreshed_task = db.get(
+            Task,
+            task.id,
+        )
+
+        assert refreshed_task is not None
+        assert refreshed_task.deleted_at is None
+
+        # TASK_DELETED must not exist.
+        activities = get_activities_for_task(
+            db,
+            task.id,
+        )
+
+        delete_activities = [
+            activity
+            for activity in activities
+            if activity.action == "TASK_DELETED"
+        ]
+
+        assert delete_activities == []
+
+    finally:
+        if task is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.task_id == task.id
+                )
+            )
+            db.delete(task)
+            db.commit()
+
+        if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
+            db.delete(project)
+            db.commit()
+
+        if user is not None:
+            db.delete(user)
+            db.commit()
 
         db.close()

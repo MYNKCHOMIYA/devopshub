@@ -123,14 +123,39 @@ def get_tasks(db: Session) -> list[Task]:
 def soft_delete_task(
     db: Session,
     task: Task,
+    actor_id: UUID,
 ) -> Task:
+    # A task that is already soft-deleted should not
+    # generate another TASK_DELETED audit event.
+    if task.deleted_at is not None:
+        return task
+
     task.deleted_at = datetime.now(timezone.utc)
+
+    # Flush the soft delete without committing.
+    # The deletion and audit record must share the
+    # same database transaction.
+    db.flush()
+
+    from app.crud.activity import record_activity
+
+    record_activity(
+        db,
+        ActivityCreate(
+            project_id=task.project_id,
+            task_id=task.id,
+            actor_id=actor_id,
+            action="TASK_DELETED",
+            metadata={
+                "title": task.title,
+            },
+        ),
+    )
 
     db.commit()
     db.refresh(task)
 
     return task
-
 
 def update_task_assignee(
     db: Session,
