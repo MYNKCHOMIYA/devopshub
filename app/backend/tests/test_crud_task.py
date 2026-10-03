@@ -3,24 +3,25 @@ from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import delete
-
-from app.models.activity import Activity
 from sqlalchemy.exc import IntegrityError
+
 from app.core.security import hash_password
 from app.crud.activity import get_activities_for_task
+from app.crud.project import create_project
 from app.crud.task import (
     create_task,
     get_task_by_id,
     get_tasks,
     soft_delete_task,
+    update_task_status,
 )
-from app.crud.project import create_project
 from app.db.session import SessionLocal
-from app.models.task import TaskPriority, TaskStatus
+from app.models.activity import Activity
+from app.models.task import Task, TaskPriority, TaskStatus
 from app.models.user import User
-from app.models.task import Task
 from app.schemas.project import ProjectCreate
 from app.schemas.task import TaskCreate
+
 
 def test_create_task():
     unique_value = uuid.uuid4().hex[:8]
@@ -617,6 +618,218 @@ def test_create_task_rolls_back_when_activity_fails(monkeypatch):
         assert activities == []
 
     finally:
+        if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
+            db.delete(project)
+            db.commit()
+
+        if user is not None:
+            db.delete(user)
+            db.commit()
+
+        db.close()
+
+
+def test_update_task_status_records_activity():
+    unique_value = uuid.uuid4().hex[:8]
+
+    db = SessionLocal()
+    user = None
+    project = None
+    task = None
+
+    try:
+        user = User(
+            username=f"status_{unique_value}",
+            email=f"status_{unique_value}@example.com",
+            password_hash=hash_password("strongpassword"),
+            name="Status Test User",
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        project = create_project(
+            db,
+            ProjectCreate(
+                owner_id=user.id,
+                name="Status Change Project",
+            ),
+        )
+
+        task = create_task(
+            db,
+            TaskCreate(
+                project_id=project.id,
+                created_by_id=user.id,
+                assignee_id=user.id,
+                title="Status Change Task",
+            ),
+        )
+
+        assert task.status == TaskStatus.TODO.value
+
+        updated_task = update_task_status(
+            db,
+            task,
+            TaskStatus.IN_PROGRESS,
+            user.id,
+        )
+
+        assert updated_task.status == TaskStatus.IN_PROGRESS.value
+
+        activities = get_activities_for_task(
+            db,
+            task.id,
+        )
+
+        status_activities = [
+            activity
+            for activity in activities
+            if activity.action == "TASK_STATUS_CHANGED"
+        ]
+
+        assert len(status_activities) == 1
+
+        activity = status_activities[0]
+
+        assert activity.project_id == project.id
+        assert activity.task_id == task.id
+        assert activity.actor_id == user.id
+        assert activity.action == "TASK_STATUS_CHANGED"
+        assert activity.activity_metadata == {
+            "old_status": "TODO",
+            "new_status": "IN_PROGRESS",
+        }
+        assert activity.created_at is not None
+
+    finally:
+        if task is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.task_id == task.id
+                )
+            )
+            db.delete(task)
+            db.commit()
+
+        if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
+            db.delete(project)
+            db.commit()
+
+        if user is not None:
+            db.delete(user)
+            db.commit()
+
+        db.close()
+
+
+
+def test_update_task_status_rolls_back_when_activity_fails(monkeypatch):
+    unique_value = uuid.uuid4().hex[:8]
+
+    db = SessionLocal()
+    user = None
+    project = None
+    task = None
+
+    try:
+        user = User(
+            username=f"statusrollback_{unique_value}",
+            email=f"statusrollback_{unique_value}@example.com",
+            password_hash=hash_password("strongpassword"),
+            name="Status Rollback User",
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        project = create_project(
+            db,
+            ProjectCreate(
+                owner_id=user.id,
+                name="Status Rollback Project",
+            ),
+        )
+
+        task = create_task(
+            db,
+            TaskCreate(
+                project_id=project.id,
+                created_by_id=user.id,
+                assignee_id=user.id,
+                title="Status Rollback Task",
+            ),
+        )
+
+        assert task.status == TaskStatus.TODO.value
+
+        def fail_record_activity(db, activity_data):
+            raise RuntimeError("Simulated status activity failure")
+
+        monkeypatch.setattr(
+            "app.crud.activity.record_activity",
+            fail_record_activity,
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="Simulated status activity failure",
+        ):
+            update_task_status(
+                db,
+                task,
+                TaskStatus.IN_PROGRESS,
+                user.id,
+            )
+
+        # The status update was flushed but never committed.
+        db.rollback()
+
+        # Re-read the task from the database.
+        refreshed_task = get_task_by_id(
+            db,
+            task.id,
+        )
+
+        assert refreshed_task is not None
+        assert refreshed_task.status == TaskStatus.TODO.value
+
+        # TASK_STATUS_CHANGED must not exist.
+        activities = get_activities_for_task(
+            db,
+            task.id,
+        )
+
+        status_activities = [
+            activity
+            for activity in activities
+            if activity.action == "TASK_STATUS_CHANGED"
+        ]
+
+        assert status_activities == []
+
+    finally:
+        if task is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.task_id == task.id
+                )
+            )
+            db.delete(task)
+            db.commit()
+
         if project is not None:
             db.execute(
                 delete(Activity).where(

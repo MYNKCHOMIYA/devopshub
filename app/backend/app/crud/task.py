@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.task import Task
+from app.models.task import Task, TaskStatus
 from app.schemas.task import TaskCreate
 from app.schemas.activity import ActivityCreate
 
@@ -52,6 +52,49 @@ def create_task(db: Session, task_data: TaskCreate) -> Task:
         raise
 
     return task
+
+
+def update_task_status(
+    db: Session,
+    task: Task,
+    new_status: TaskStatus,
+    actor_id: UUID,
+) -> Task:
+    old_status = task.status
+    new_status_value = new_status.value
+
+    # Nothing changed, so there is nothing to audit.
+    if old_status == new_status_value:
+        return task
+
+    task.status = new_status_value
+
+    # Flush the Task UPDATE without committing.
+    # The Task change and Activity record must share
+    # the same database transaction.
+    db.flush()
+
+    from app.crud.activity import record_activity
+
+    record_activity(
+        db,
+        ActivityCreate(
+            project_id=task.project_id,
+            task_id=task.id,
+            actor_id=actor_id,
+            action="TASK_STATUS_CHANGED",
+            metadata={
+                "old_status": old_status,
+                "new_status": new_status_value,
+            },
+        ),
+    )
+
+    db.commit()
+    db.refresh(task)
+
+    return task
+
 
 def get_task_by_id(
     db: Session,
