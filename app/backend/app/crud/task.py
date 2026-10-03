@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models.task import Task
 from app.schemas.task import TaskCreate
+from app.schemas.activity import ActivityCreate
 
 
 def create_task(db: Session, task_data: TaskCreate) -> Task:
@@ -24,14 +25,33 @@ def create_task(db: Session, task_data: TaskCreate) -> Task:
     db.add(task)
 
     try:
+        # Flush the Task INSERT without committing.
+        # This makes task.id available for the audit record.
+        db.flush()
+
+        from app.crud.activity import record_activity
+
+        record_activity(
+            db,
+            ActivityCreate(
+                project_id=task.project_id,
+                task_id=task.id,
+                actor_id=task.created_by_id,
+                action="TASK_CREATED",
+                metadata={
+                    "title": task.title,
+                },
+            ),
+        )
+
         db.commit()
         db.refresh(task)
+
     except IntegrityError:
         db.rollback()
         raise
 
     return task
-
 
 def get_task_by_id(
     db: Session,
