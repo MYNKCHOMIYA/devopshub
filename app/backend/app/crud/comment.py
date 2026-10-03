@@ -4,10 +4,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.comment import Comment
+from app.models.task import Task
+from app.schemas.activity import ActivityCreate
 from app.schemas.comment import CommentCreate
 
 
-def create_comment(db: Session, comment_data: CommentCreate) -> Comment:
+def create_comment(
+    db: Session,
+    comment_data: CommentCreate,
+) -> Comment:
     comment = Comment(
         task_id=comment_data.task_id,
         author_id=comment_data.author_id,
@@ -15,10 +20,39 @@ def create_comment(db: Session, comment_data: CommentCreate) -> Comment:
     )
 
     db.add(comment)
+
+    # Flush the Comment INSERT without committing.
+    # This makes the comment UUID available inside the transaction.
+    db.flush()
+
+    # Activity requires project_id, but Comment only stores task_id.
+    # Resolve the parent project through the Task.
+    task = db.get(Task, comment.task_id)
+
+    if task is None:
+        raise ValueError("Task not found for comment.")
+
+    from app.crud.activity import record_activity
+
+    record_activity(
+        db,
+        ActivityCreate(
+            project_id=task.project_id,
+            task_id=comment.task_id,
+            actor_id=comment.author_id,
+            action="COMMENT_CREATED",
+            metadata={
+                "content": comment.content,
+            },
+        ),
+    )
+
     db.commit()
     db.refresh(comment)
 
     return comment
+
+
 
 
 def get_comment_by_id(
