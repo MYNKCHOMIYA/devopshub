@@ -14,6 +14,7 @@ from app.crud.task import (
     get_tasks,
     soft_delete_task,
     update_task_status,
+    update_task_assignee,
 )
 from app.db.session import SessionLocal
 from app.models.activity import Activity
@@ -842,5 +843,260 @@ def test_update_task_status_rolls_back_when_activity_fails(monkeypatch):
         if user is not None:
             db.delete(user)
             db.commit()
+
+        db.close()
+
+
+def test_update_task_assignee_records_activity():
+    unique_value = uuid.uuid4().hex[:8]
+
+    db = SessionLocal()
+    actor = None
+    old_assignee = None
+    new_assignee = None
+    project = None
+    task = None
+
+    try:
+        actor = User(
+            username=f"assignactor_{unique_value}",
+            email=f"assignactor_{unique_value}@example.com",
+            password_hash=hash_password("strongpassword"),
+            name="Assignment Actor",
+        )
+
+        old_assignee = User(
+            username=f"assignold_{unique_value}",
+            email=f"assignold_{unique_value}@example.com",
+            password_hash=hash_password("strongpassword"),
+            name="Old Assignee",
+        )
+
+        new_assignee = User(
+            username=f"assignnew_{unique_value}",
+            email=f"assignnew_{unique_value}@example.com",
+            password_hash=hash_password("strongpassword"),
+            name="New Assignee",
+        )
+
+        db.add_all([actor, old_assignee, new_assignee])
+        db.commit()
+
+        db.refresh(actor)
+        db.refresh(old_assignee)
+        db.refresh(new_assignee)
+
+        project = create_project(
+            db,
+            ProjectCreate(
+                owner_id=actor.id,
+                name="Task Assignment Project",
+            ),
+        )
+
+        task = create_task(
+            db,
+            TaskCreate(
+                project_id=project.id,
+                created_by_id=actor.id,
+                assignee_id=old_assignee.id,
+                title="Assignment Test Task",
+            ),
+        )
+
+        assert task.assignee_id == old_assignee.id
+
+        updated_task = update_task_assignee(
+            db,
+            task,
+            new_assignee.id,
+            actor.id,
+        )
+
+        assert updated_task.assignee_id == new_assignee.id
+
+        activities = get_activities_for_task(
+            db,
+            task.id,
+        )
+
+        assignment_activities = [
+            activity
+            for activity in activities
+            if activity.action == "TASK_ASSIGNED"
+        ]
+
+        assert len(assignment_activities) == 1
+
+        activity = assignment_activities[0]
+
+        assert activity.project_id == project.id
+        assert activity.task_id == task.id
+        assert activity.actor_id == actor.id
+        assert activity.action == "TASK_ASSIGNED"
+        assert activity.activity_metadata == {
+            "old_assignee_id": str(old_assignee.id),
+            "new_assignee_id": str(new_assignee.id),
+        }
+        assert activity.created_at is not None
+
+    finally:
+        if task is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.task_id == task.id
+                )
+            )
+            db.delete(task)
+            db.commit()
+
+        if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
+            db.delete(project)
+            db.commit()
+
+        for user in [actor, old_assignee, new_assignee]:
+            if user is not None:
+                db.delete(user)
+                db.commit()
+
+        db.close()
+
+
+def test_update_task_assignee_rolls_back_when_activity_fails(monkeypatch):
+    unique_value = uuid.uuid4().hex[:8]
+
+    db = SessionLocal()
+    actor = None
+    old_assignee = None
+    new_assignee = None
+    project = None
+    task = None
+
+    try:
+        actor = User(
+            username=f"assignrollbackactor_{unique_value}",
+            email=f"assignrollbackactor_{unique_value}@example.com",
+            password_hash=hash_password("strongpassword"),
+            name="Assignment Rollback Actor",
+        )
+
+        old_assignee = User(
+            username=f"assignrollbackold_{unique_value}",
+            email=f"assignrollbackold_{unique_value}@example.com",
+            password_hash=hash_password("strongpassword"),
+            name="Old Rollback Assignee",
+        )
+
+        new_assignee = User(
+            username=f"assignrollbacknew_{unique_value}",
+            email=f"assignrollbacknew_{unique_value}@example.com",
+            password_hash=hash_password("strongpassword"),
+            name="New Rollback Assignee",
+        )
+
+        db.add_all([
+            actor,
+            old_assignee,
+            new_assignee,
+        ])
+        db.commit()
+
+        db.refresh(actor)
+        db.refresh(old_assignee)
+        db.refresh(new_assignee)
+
+        project = create_project(
+            db,
+            ProjectCreate(
+                owner_id=actor.id,
+                name="Assignment Rollback Project",
+            ),
+        )
+
+        task = create_task(
+            db,
+            TaskCreate(
+                project_id=project.id,
+                created_by_id=actor.id,
+                assignee_id=old_assignee.id,
+                title="Assignment Rollback Task",
+            ),
+        )
+
+        assert task.assignee_id == old_assignee.id
+
+        def fail_record_activity(db, activity_data):
+            raise RuntimeError("Simulated assignment activity failure")
+
+        monkeypatch.setattr(
+            "app.crud.activity.record_activity",
+            fail_record_activity,
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="Simulated assignment activity failure",
+        ):
+            update_task_assignee(
+                db,
+                task,
+                new_assignee.id,
+                actor.id,
+            )
+
+        # The assignment update was flushed but never committed.
+        db.rollback()
+
+        # Re-read from the database to verify the rollback.
+        refreshed_task = get_task_by_id(
+            db,
+            task.id,
+        )
+
+        assert refreshed_task is not None
+        assert refreshed_task.assignee_id == old_assignee.id
+
+        # TASK_ASSIGNED must not exist.
+        activities = get_activities_for_task(
+            db,
+            task.id,
+        )
+
+        assignment_activities = [
+            activity
+            for activity in activities
+            if activity.action == "TASK_ASSIGNED"
+        ]
+
+        assert assignment_activities == []
+
+    finally:
+        if task is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.task_id == task.id
+                )
+            )
+            db.delete(task)
+            db.commit()
+
+        if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
+            db.delete(project)
+            db.commit()
+
+        for user in [actor, old_assignee, new_assignee]:
+            if user is not None:
+                db.delete(user)
+                db.commit()
 
         db.close()

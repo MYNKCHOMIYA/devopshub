@@ -130,3 +130,44 @@ def soft_delete_task(
     db.refresh(task)
 
     return task
+
+
+def update_task_assignee(
+    db: Session,
+    task: Task,
+    new_assignee_id: UUID,
+    actor_id: UUID,
+) -> Task:
+    old_assignee_id = task.assignee_id
+
+    # Nothing changed, so there is nothing to audit.
+    if old_assignee_id == new_assignee_id:
+        return task
+
+    task.assignee_id = new_assignee_id
+
+    # Flush the Task UPDATE without committing.
+    # The assignment change and audit record must share
+    # the same database transaction.
+    db.flush()
+
+    from app.crud.activity import record_activity
+
+    record_activity(
+        db,
+        ActivityCreate(
+            project_id=task.project_id,
+            task_id=task.id,
+            actor_id=actor_id,
+            action="TASK_ASSIGNED",
+            metadata={
+                "old_assignee_id": str(old_assignee_id),
+                "new_assignee_id": str(new_assignee_id),
+            },
+        ),
+    )
+
+    db.commit()
+    db.refresh(task)
+
+    return task
