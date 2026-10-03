@@ -70,6 +70,10 @@ def delete_project_endpoint(
             detail="Project not found.",
         )
 
-    soft_delete_project(db, project)
+    soft_delete_project(
+        db,
+        project,
+        project.owner_id,
+    )
 
     return None

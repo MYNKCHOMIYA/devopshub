@@ -74,8 +74,34 @@ def get_projects(db: Session) -> list[Project]:
 def soft_delete_project(
     db: Session,
     project: Project,
+    actor_id: UUID,
 ) -> Project:
+    # A project that is already soft-deleted should not
+    # generate another PROJECT_DELETED audit event.
+    if project.deleted_at is not None:
+        return project
+
     project.deleted_at = datetime.now(timezone.utc)
+
+    # Flush the soft delete without committing.
+    # The deletion and audit record must share the
+    # same database transaction.
+    db.flush()
+
+    from app.crud.activity import record_activity
+
+    record_activity(
+        db,
+        ActivityCreate(
+            project_id=project.id,
+            task_id=None,
+            actor_id=actor_id,
+            action="PROJECT_DELETED",
+            metadata={
+                "name": project.name,
+            },
+        ),
+    )
 
     db.commit()
     db.refresh(project)
