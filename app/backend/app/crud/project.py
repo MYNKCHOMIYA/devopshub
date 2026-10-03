@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.project import Project
+from app.schemas.activity import ActivityCreate
 from app.schemas.project import ProjectCreate
 
 from datetime import datetime, timezone
@@ -20,6 +21,26 @@ def create_project(db: Session, project_data: ProjectCreate) -> Project:
     )
 
     db.add(project)
+
+    # Flush sends the INSERT without committing the transaction.
+    # This makes project.id available for the audit record.
+    db.flush()
+
+    from app.crud.activity import record_activity
+
+    record_activity(
+        db,
+        ActivityCreate(
+            project_id=project.id,
+            task_id=None,
+            actor_id=project.owner_id,
+            action="PROJECT_CREATED",
+            metadata={
+                "name": project.name,
+            },
+        ),
+    )
+
     db.commit()
     db.refresh(project)
 

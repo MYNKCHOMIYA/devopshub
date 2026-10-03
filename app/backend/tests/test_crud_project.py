@@ -1,7 +1,11 @@
 import uuid
 from datetime import datetime, timezone
 
+import pytest
+from sqlalchemy import delete
+
 from app.core.security import hash_password
+from app.crud.activity import get_activities_for_project
 from app.crud.project import (
     create_project,
     get_project_by_id,
@@ -9,6 +13,8 @@ from app.crud.project import (
     soft_delete_project,
 )
 from app.db.session import SessionLocal
+from app.models.activity import Activity
+from app.models.project import Project
 from app.models.user import User
 from app.schemas.project import ProjectCreate
 
@@ -47,6 +53,11 @@ def test_create_project():
 
     finally:
         if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
             db.delete(project)
             db.commit()
 
@@ -93,6 +104,11 @@ def test_get_project_by_id():
 
     finally:
         if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
             db.delete(project)
             db.commit()
 
@@ -148,10 +164,20 @@ def test_get_projects():
 
     finally:
         if project_one is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project_one.id
+                )
+            )
             db.delete(project_one)
             db.commit()
 
         if project_two is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project_two.id
+                )
+            )
             db.delete(project_two)
             db.commit()
 
@@ -212,10 +238,20 @@ def test_get_projects_excludes_deleted_projects():
 
     finally:
         if active_project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == active_project.id
+                )
+            )
             db.delete(active_project)
             db.commit()
 
         if deleted_project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == deleted_project.id
+                )
+            )
             db.delete(deleted_project)
             db.commit()
 
@@ -265,9 +301,143 @@ def test_soft_delete_project():
 
     finally:
         if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
             db.delete(project)
             db.commit()
 
+        if user is not None:
+            db.delete(user)
+            db.commit()
+
+        db.close()
+
+
+def test_create_project_records_activity():
+    unique_value = uuid.uuid4().hex[:8]
+
+    db = SessionLocal()
+    user = None
+    project = None
+
+    try:
+        user = User(
+            username=f"activity_project_{unique_value}",
+            email=f"activity_project_{unique_value}@example.com",
+            password_hash=hash_password("strongpassword"),
+            name="Activity Project Owner",
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        project_data = ProjectCreate(
+            owner_id=user.id,
+            name="Activity Test Project",
+            description="Project activity test",
+        )
+
+        project = create_project(db, project_data)
+
+        activities = get_activities_for_project(
+            db,
+            project.id,
+        )
+
+        assert len(activities) == 1
+
+        activity = activities[0]
+
+        assert activity.project_id == project.id
+        assert activity.task_id is None
+        assert activity.actor_id == user.id
+        assert activity.action == "PROJECT_CREATED"
+        assert activity.activity_metadata == {
+            "name": "Activity Test Project",
+        }
+        assert activity.created_at is not None
+
+    finally:
+        if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
+
+            db.delete(project)
+
+        if user is not None:
+            db.delete(user)
+
+        db.commit()
+        db.close()
+
+
+def test_create_project_rolls_back_when_activity_fails(monkeypatch):
+    unique_value = uuid.uuid4().hex[:8]
+
+    db = SessionLocal()
+    user = None
+    captured = {}
+
+    try:
+        user = User(
+            username=f"rollback_project_{unique_value}",
+            email=f"rollback_project_{unique_value}@example.com",
+            password_hash=hash_password("strongpassword"),
+            name="Rollback Test Owner",
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        def fail_record_activity(db, activity_data):
+            # This function is reached only after create_project()
+            # has already flushed the Project INSERT.
+            captured["project_id"] = activity_data.project_id
+
+            raise RuntimeError("Simulated activity failure")
+
+        monkeypatch.setattr(
+            "app.crud.activity.record_activity",
+            fail_record_activity,
+        )
+
+        project_data = ProjectCreate(
+            owner_id=user.id,
+            name="Rollback Test Project",
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="Simulated activity failure",
+        ):
+            create_project(db, project_data)
+
+        # The Project INSERT happened during flush(), but commit()
+        # was never reached. Roll back the open transaction.
+        db.rollback()
+
+        project_id = captured["project_id"]
+
+        # The Project must NOT exist after the rollback.
+        assert db.get(Project, project_id) is None
+
+        # The Activity must also NOT exist.
+        activities = get_activities_for_project(
+            db,
+            project_id,
+        )
+
+        assert activities == []
+
+    finally:
         if user is not None:
             db.delete(user)
             db.commit()

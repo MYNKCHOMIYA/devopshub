@@ -1,6 +1,10 @@
 import uuid
-import pytest
 from datetime import datetime, timezone
+
+import pytest
+from sqlalchemy import delete
+
+from app.models.activity import Activity
 from sqlalchemy.exc import IntegrityError
 from app.core.security import hash_password
 from app.crud.task import (
@@ -69,6 +73,11 @@ def test_create_task():
             db.commit()
 
         if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
             db.delete(project)
             db.commit()
 
@@ -130,6 +139,11 @@ def test_get_task_by_id():
             db.commit()
 
         if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
             db.delete(project)
             db.commit()
 
@@ -206,6 +220,11 @@ def test_get_tasks():
             db.commit()
 
         if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
             db.delete(project)
             db.commit()
 
@@ -287,6 +306,11 @@ def test_get_tasks_excludes_deleted_tasks():
             db.commit()
 
         if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
             db.delete(project)
             db.commit()
 
@@ -347,6 +371,11 @@ def test_soft_delete_task():
             db.commit()
 
         if project is not None:
+            db.execute(
+                delete(Activity).where(
+                    Activity.project_id == project.id
+                )
+            )
             db.delete(project)
             db.commit()
 

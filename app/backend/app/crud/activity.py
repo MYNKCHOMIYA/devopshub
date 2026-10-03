@@ -11,15 +11,7 @@ def create_activity(
     db: Session,
     activity_data: ActivityCreate,
 ) -> Activity:
-    activity = Activity(
-        project_id=activity_data.project_id,
-        task_id=activity_data.task_id,
-        actor_id=activity_data.actor_id,
-        action=activity_data.action,
-        activity_metadata=activity_data.metadata,
-    )
-
-    db.add(activity)
+    activity = record_activity(db, activity_data)
     db.commit()
     db.refresh(activity)
 
@@ -67,3 +59,20 @@ def get_activities_for_task(
     result = db.execute(statement)
 
     return list(result.scalars().all())
+
+
+def record_activity(
+    db: Session,
+    activity_data: ActivityCreate,
+) -> Activity:
+    activity = Activity(
+        project_id=activity_data.project_id,
+        task_id=activity_data.task_id,
+        actor_id=activity_data.actor_id,
+        action=activity_data.action,
+        activity_metadata=activity_data.metadata,
+    )
+
+    db.add(activity)
+
+    return activity

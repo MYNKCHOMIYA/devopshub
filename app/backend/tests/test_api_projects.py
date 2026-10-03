@@ -1,6 +1,9 @@
 import uuid
 
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
+
+from app.models.activity import Activity
 
 from app.core.security import hash_password
 from app.db.session import SessionLocal
@@ -59,6 +62,11 @@ def test_create_project_api():
             project = db.get(Project, uuid.UUID(project_id))
 
             if project is not None:
+                db.execute(
+                    delete(Activity).where(
+                        Activity.project_id == project.id
+                    )
+                )
                 db.delete(project)
                 db.commit()
 
@@ -122,6 +130,11 @@ def test_get_project_api():
             project = db.get(Project, uuid.UUID(project_id))
 
             if project is not None:
+                db.execute(
+                    delete(Activity).where(
+                        Activity.project_id == project.id
+                    )
+                )
                 db.delete(project)
                 db.commit()
 
@@ -190,6 +203,11 @@ def test_get_projects_api():
             project = db.get(Project, uuid.UUID(project_id))
 
             if project is not None:
+                db.execute(
+                    delete(Activity).where(
+                        Activity.project_id == project.id
+                    )
+                )
                 db.delete(project)
                 db.commit()
 
@@ -257,6 +275,11 @@ def test_delete_project_api():
             project = db.get(Project, uuid.UUID(project_id))
 
             if project is not None:
+                db.execute(
+                    delete(Activity).where(
+                        Activity.project_id == project.id
+                    )
+                )
                 db.delete(project)
                 db.commit()
 
