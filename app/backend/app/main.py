@@ -6,6 +6,8 @@ from app.api.routes.users import router as users_router
 from app.api.routes.projects import router as projects_router
 from app.api.routes.tasks import router as tasks_router
 from app.api.routes.comments import router as comments_router
+from app.api.routes.activities import router as activities_router
+
 from app.db.session import engine
 
 
@@ -19,6 +21,8 @@ app.include_router(users_router)
 app.include_router(projects_router)
 app.include_router(tasks_router)
 app.include_router(comments_router)
+app.include_router(activities_router)
+
 
 @app.get("/health")
 def health_check():
