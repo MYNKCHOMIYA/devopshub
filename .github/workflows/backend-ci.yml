@@ -1,0 +1,60 @@
+name: Backend CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  backend-tests:
+    name: Test Backend
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+
+        env:
+          POSTGRES_DB: devopshub
+          POSTGRES_USER: devopshub
+          POSTGRES_PASSWORD: devopshub_ci_password
+
+        ports:
+          - 5432:5432
+
+        options: >-
+          --health-cmd "pg_isready -U devopshub -d devopshub"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: app/backend
+
+    env:
+      DATABASE_URL: postgresql+psycopg://devopshub:devopshub_ci_password@localhost:5432/devopshub
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14.4'
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Apply database migrations
+        run: alembic upgrade head
+
+      - name: Run tests
+        run: python -m pytest -q
