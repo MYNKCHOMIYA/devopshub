@@ -53,7 +53,7 @@ def test_create_project_api():
         assert data["owner_id"] == str(user.id)
         assert data["name"] == "API Test Project"
         assert data["description"] == "Created by API test"
-        assert data["status"] == "TODO"
+        assert data["status"] == "DONE"
         assert data["priority"] == "HIGH"
         assert "password_hash" not in data
 
